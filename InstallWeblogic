@@ -1,0 +1,110 @@
+#!/bin/bash
+
+# This script downloads WebLogic 12.2, JDK 1.8, and script.sh from fixed URLs,
+# unzips/extracts them into /u001/software, and runs script.sh.
+# Designed for RHEL 8/9 or Oracle Linux 9.
+
+set -e
+/
+WEBLOGIC_URL="https://download.oracle.com/otn/nt/middleware/12c/wls/12214/fmw_12.2.1.4.0_wls_Disk1_1of1.zip"
+JDK_URL="https://download.oracle.com/java/18/latest/jdk-8u391-linux-x64.tar.gz"
+SCRIPT_URL="https://example.com/path/to/script.sh"     # <-- Replace with real script URL
+
+WEBLOGIC_FILE="fmw_12.2.1.4.0_wls_Disk1_1of1.zip"
+JDK_FILE="jdk-8u391-linux-x64.tar.gz"
+SCRIPT_FILE="script.sh"
+
+TARGET_DIR="/u001/software"
+
+# Check OS Support
+. /etc/os-release
+
+if [[ "$ID" != "rhel" && "$ID" != "ol" ]] || ([[ "$VERSION_ID" != 8* && "$VERSION_ID" != 9* ]]); then
+  echo "This script is intended for RHEL 8/9 or Oracle Linux 9 only."
+  exit 1
+fi
+
+echo "Detected OS: $PRETTY_NAME"
+
+# Ensure required utilities are installed
+install_util_if_missing() {
+  for util in "$@"; do
+    if ! command -v "$util" &>/dev/null; then
+      echo "$util not found. Installing $util..."
+      sudo dnf install -y "$util"
+    fi
+  done
+}
+
+install_util_if_missing curl unzip tar
+
+# Create target directory if it does not exist
+if [ ! -d "$TARGET_DIR" ]; then
+  echo "Creating directory $TARGET_DIR ..."
+  sudo mkdir -p "$TARGET_DIR"
+  sudo chown "$(id -u)":"$(id -g)" "$TARGET_DIR"
+fi
+
+cd "$TARGET_DIR"
+
+# Download WebLogic
+echo "Downloading WebLogic 12.2 from $WEBLOGIC_URL ..."
+curl -L -o "$WEBLOGIC_FILE" "$WEBLOGIC_URL"
+
+# Download JDK 1.8
+echo "Downloading JDK 1.8 from $JDK_URL ..."
+curl -L -o "$JDK_FILE" "$JDK_URL"
+
+# Download script.sh
+echo "Downloading script.sh from $SCRIPT_URL ..."
+curl -L -o "$SCRIPT_FILE" "$SCRIPT_URL"
+
+# Unzip WebLogic
+echo "Unzipping $WEBLOGIC_FILE ..."
+unzip -o "$WEBLOGIC_FILE" -d weblogic_extracted
+
+# Extract JDK
+echo "Extracting $JDK_FILE ..."
+mkdir -p jdk_extracted
+tar -xzf "$JDK_FILE" -C jdk_extracted
+
+echo "All downloads complete and files extracted to $TARGET_DIR."
+
+# Make script.sh executable and run it
+chmod +x "$SCRIPT_FILE"
+echo "Running $SCRIPT_FILE ..."
+./"$SCRIPT_FILE"
+
+# ------------- New Step: Copy user_projects under Oracle home --------------------
+# After script.sh completes, look for common WebLogic Oracle Homes and copy user_projects.
+# Assumes Oracle Home is under $TARGET_DIR/weblogic_extracted, but best-effort if not.
+
+ORACLE_HOME=""
+for d in "$TARGET_DIR"/weblogic_extracted/*; do
+  if [ -d "$d/user_projects" ]; then
+    ORACLE_HOME="$d"
+    break
+  fi
+done
+
+if [ -z "$ORACLE_HOME" ]; then
+  # Try finding from domain structure, fallback: pick first plausible directory
+  candidates=("$TARGET_DIR"/weblogic_extracted/*/oracle_common)
+  if [ -d "${candidates[0]}" ]; then
+    ORACLE_HOME="$(dirname "${candidates[0]}")"
+  fi
+fi
+
+if [ -n "$ORACLE_HOME" ] && [ -d "$ORACLE_HOME/user_projects" ]; then
+  echo "Copying user_projects folder under Oracle Home: $ORACLE_HOME"
+  cp -r "$ORACLE_HOME/user_projects" "$TARGET_DIR/"
+  echo "user_projects folder copied to $TARGET_DIR/"
+else
+  echo "user_projects folder not found in extracted WebLogic directories."
+fi
+
+
+
+
+
+
