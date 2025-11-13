@@ -1,110 +1,113 @@
 #!/bin/bash
+# Automated WebLogic 12.2 installer script with dedicated 'weblogic' user
+# Downloads WebLogic, JDK, and a helper script, and runs the installer as 'weblogic'
+# Supports RHEL 8/9 and Oracle Linux 9
 
-# This script downloads WebLogic 12.2, JDK 1.8, and script.sh from fixed URLs,
-# unzips/extracts them into /u001/software, and runs script.sh.
-# Designed for RHEL 8/9 or Oracle Linux 9.
+set -euo pipefail
+set -x
 
-set -e
-/
-WEBLOGIC_URL="https://download.oracle.com/otn/nt/middleware/12c/wls/12214/fmw_12.2.1.4.0_wls_Disk1_1of1.zip"
-JDK_URL="https://download.oracle.com/java/18/latest/jdk-8u391-linux-x64.tar.gz"
-SCRIPT_URL="https://example.com/path/to/script.sh"     # <-- Replace with real script URL
+WEBLOGIC_URL="https://stage.morpheusdata.com/public-archives/download/Public%20Install%20Files/fmw_12.2.1.4.0_wls_lite_Disk1_1of1.zip"
+JDK_URL="https://stage.morpheusdata.com/public-archives/download/Public%20Install%20Files/jdk-8u202-linux-x64.tar.gz"
+SCRIPT_URL="https://stage.morpheusdata.com/public-archives/download/Public%20Install%20Files/weblogic_script.sh"
+
+WLS_USER="weblogic"
+TARGET_DIR="/u001/software"
+WEBLOGIC_HOME="/u001/wls122156/Middleware/Oracle_Home"
 
 WEBLOGIC_FILE="fmw_12.2.1.4.0_wls_Disk1_1of1.zip"
-JDK_FILE="jdk-8u391-linux-x64.tar.gz"
-SCRIPT_FILE="script.sh"
+JDK_FILE="jdk-8u202-linux-x64.tar.gz"
+SCRIPT_FILE="$TARGET_DIR/script.sh"
+JAVA_HOMEPATH="$TARGET_DIR/jdk1.8.0_202"
+WEBLOGIC_INSTALLER_PATH="$TARGET_DIR/fmw_12.2.1.4.0_wls_lite_generic.jar"
 
-TARGET_DIR="/u001/software"
 
-# Check OS Support
-. /etc/os-release
+# --- Check OS ---
+if [ -f /etc/os-release ]; then
+  source /etc/os-release
+  echo "Detected OS: $PRETTY_NAME"
+else
+  echo "Error: /etc/os-release not found. Cannot verify OS version."
+  exit 1
+fi
 
-if [[ "$ID" != "rhel" && "$ID" != "ol" ]] || ([[ "$VERSION_ID" != 8* && "$VERSION_ID" != 9* ]]); then
+if [[ "$ID" != "rhel" && "$ID" != "ol" ]] || [[ "$VERSION_ID" != 8* && "$VERSION_ID" != 9* ]]; then
   echo "This script is intended for RHEL 8/9 or Oracle Linux 9 only."
   exit 1
 fi
 
-echo "Detected OS: $PRETTY_NAME"
-
-# Ensure required utilities are installed
+# --- Install required utilities ---
 install_util_if_missing() {
   for util in "$@"; do
     if ! command -v "$util" &>/dev/null; then
-      echo "$util not found. Installing $util..."
+      echo "$util not found. Installing..."
       sudo dnf install -y "$util"
     fi
   done
 }
+install_util_if_missing curl unzip tar sudo
 
-install_util_if_missing curl unzip tar
+# --- Ensure parent directory exists ---
 
-# Create target directory if it does not exist
-if [ ! -d "$TARGET_DIR" ]; then
-  echo "Creating directory $TARGET_DIR ..."
-  sudo mkdir -p "$TARGET_DIR"
-  sudo chown "$(id -u)":"$(id -g)" "$TARGET_DIR"
+sudo mkdir -p "$WEBLOGIC_HOME"
+sudo chown -R "$WLS_USER:$WLS_USER" "/u001/wls122156/"
+sudo chmod -R 755 "/u001/wls122156"
+
+# --- Create dedicated 'weblogic' user for testing if it does not exist ---
+if ! id "$WLS_USER" &>/dev/null; then
+  echo "Creating dedicated WebLogic user '$WLS_USER' (no password, login disabled)..."
+  sudo useradd -m -s /sbin/nologin "$WLS_USER"
 fi
 
+sudo mkdir -p "$TARGET_DIR"
+sudo chown -R "$WLS_USER:$WLS_USER" "/u001"
+sudo chmod -R 755 "/u001"
+# --- Download WebLogic and JDK ---
 cd "$TARGET_DIR"
+[ ! -f "$WEBLOGIC_FILE" ] && echo "Downloading WebLogic..." && sudo -u weblogic curl -L -o "$WEBLOGIC_FILE" "$WEBLOGIC_URL"
+[ ! -f "$JDK_FILE" ] && echo "Downloading JDK..." &&  sudo -u weblogic curl -L -o "$JDK_FILE" "$JDK_URL"
 
-# Download WebLogic
-echo "Downloading WebLogic 12.2 from $WEBLOGIC_URL ..."
-curl -L -o "$WEBLOGIC_FILE" "$WEBLOGIC_URL"
-
-# Download JDK 1.8
-echo "Downloading JDK 1.8 from $JDK_URL ..."
-curl -L -o "$JDK_FILE" "$JDK_URL"
-
-# Download script.sh
-echo "Downloading script.sh from $SCRIPT_URL ..."
-curl -L -o "$SCRIPT_FILE" "$SCRIPT_URL"
-
-# Unzip WebLogic
-echo "Unzipping $WEBLOGIC_FILE ..."
-unzip -o "$WEBLOGIC_FILE" -d weblogic_extracted
-
-# Extract JDK
-echo "Extracting $JDK_FILE ..."
-mkdir -p jdk_extracted
-tar -xzf "$JDK_FILE" -C jdk_extracted
-
-echo "All downloads complete and files extracted to $TARGET_DIR."
-
-# Make script.sh executable and run it
-chmod +x "$SCRIPT_FILE"
-echo "Running $SCRIPT_FILE ..."
-./"$SCRIPT_FILE"
-
-# ------------- New Step: Copy user_projects under Oracle home --------------------
-# After script.sh completes, look for common WebLogic Oracle Homes and copy user_projects.
-# Assumes Oracle Home is under $TARGET_DIR/weblogic_extracted, but best-effort if not.
-
-ORACLE_HOME=""
-for d in "$TARGET_DIR"/weblogic_extracted/*; do
-  if [ -d "$d/user_projects" ]; then
-    ORACLE_HOME="$d"
-    break
-  fi
-done
-
-if [ -z "$ORACLE_HOME" ]; then
-  # Try finding from domain structure, fallback: pick first plausible directory
-  candidates=("$TARGET_DIR"/weblogic_extracted/*/oracle_common)
-  if [ -d "${candidates[0]}" ]; then
-    ORACLE_HOME="$(dirname "${candidates[0]}")"
-  fi
+# --- Validate downloads ---
+MIN_WEBLOGIC_SIZE=579000000
+actual_size=$(stat -c%s "$WEBLOGIC_FILE")
+if [ "$actual_size" -lt "$MIN_WEBLOGIC_SIZE" ]; then
+  echo "Error: WebLogic zip file too small ($actual_size bytes)."
+  exit 1
 fi
 
-if [ -n "$ORACLE_HOME" ] && [ -d "$ORACLE_HOME/user_projects" ]; then
-  echo "Copying user_projects folder under Oracle Home: $ORACLE_HOME"
-  cp -r "$ORACLE_HOME/user_projects" "$TARGET_DIR/"
-  echo "user_projects folder copied to $TARGET_DIR/"
+MIN_JDK_SIZE=185000000
+actual_size=$(stat -c%s "$JDK_FILE")
+if [ "$actual_size" -lt "$MIN_JDK_SIZE" ]; then
+  echo "Error: JDK tar.gz file too small ($actual_size bytes)."
+  exit 1
+fi
+sudo chown "$WLS_USER:$WLS_USER" "$WEBLOGIC_FILE" "$JDK_FILE" 
+# --- Extract files ---
+echo "Unzipping $WEBLOGIC_FILE..."
+sudo -u "$WLS_USER" unzip -o "$WEBLOGIC_FILE"
+
+echo "Extracting $JDK_FILE..."
+sudo -u "$WLS_USER" tar -xzf "$JDK_FILE" --overwrite
+
+# --- Download helper script ---
+echo "Downloading script.sh from $SCRIPT_URL..."
+sudo -u "$WLS_USER" curl -L -o "$SCRIPT_FILE" "$SCRIPT_URL"
+
+# --- Set ownership of downloaded files ---
+sudo chown "$WLS_USER:$WLS_USER"  "$SCRIPT_FILE"
+sudo chmod +x "$SCRIPT_FILE"
+
+# --- Override variables inside script.sh ---
+if [ -f "$SCRIPT_FILE" ]; then
+  echo "Overriding JAVA_HOME and WEBLOGIC_INSTALLER in $SCRIPT_FILE..."
+  sudo -u "$WLS_USER" sed -i "s|^JAVA_HOME=.*|JAVA_HOME=\"$JAVA_HOMEPATH\"|" "$SCRIPT_FILE"
+sudo -u "$WLS_USER" sed -i "s|^WEBLOGIC_INSTALLER=.*|WEBLOGIC_INSTALLER=\"$WEBLOGIC_INSTALLER_PATH\"|" "$SCRIPT_FILE"
+
+
+  echo "Running installer as '$WLS_USER'..."
+  sudo -u "$WLS_USER" bash "$SCRIPT_FILE"
 else
-  echo "user_projects folder not found in extracted WebLogic directories."
+  echo "Error: $SCRIPT_FILE not found."
+  exit 1
 fi
 
-
-
-
-
-
+echo "All downloads, extractions, and installer execution completed."
