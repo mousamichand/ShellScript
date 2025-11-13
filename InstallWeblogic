@@ -4,7 +4,7 @@
 # Supports RHEL 8/9 and Oracle Linux 9
 
 set -euo pipefail
-set -x
+#set -x
 
 WEBLOGIC_URL="https://stage.morpheusdata.com/public-archives/download/Public%20Install%20Files/fmw_12.2.1.4.0_wls_lite_Disk1_1of1.zip"
 JDK_URL="https://stage.morpheusdata.com/public-archives/download/Public%20Install%20Files/jdk-8u202-linux-x64.tar.gz"
