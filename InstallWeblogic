@@ -46,11 +46,6 @@ install_util_if_missing() {
 }
 install_util_if_missing curl unzip tar sudo
 
-# --- Ensure parent directory exists ---
-
-sudo mkdir -p "$WEBLOGIC_HOME"
-sudo chown -R "$WLS_USER:$WLS_USER" "/u001/wls122156/"
-sudo chmod -R 755 "/u001/wls122156"
 
 # --- Create dedicated 'weblogic' user for testing if it does not exist ---
 if ! id "$WLS_USER" &>/dev/null; then
@@ -58,23 +53,29 @@ if ! id "$WLS_USER" &>/dev/null; then
   sudo useradd -m -s /sbin/nologin "$WLS_USER"
 fi
 
+# --- Ensure parent directory exists ---
+
+sudo mkdir -p "$WEBLOGIC_HOME"
+sudo chown -R "$WLS_USER:$WLS_USER" "/u001/wls122156/"
+sudo chmod -R 755 "/u001/wls122156"
 sudo mkdir -p "$TARGET_DIR"
 sudo chown -R "$WLS_USER:$WLS_USER" "/u001"
 sudo chmod -R 755 "/u001"
+
 # --- Download WebLogic and JDK ---
 cd "$TARGET_DIR"
 [ ! -f "$WEBLOGIC_FILE" ] && echo "Downloading WebLogic..." && sudo -u weblogic curl -L -o "$WEBLOGIC_FILE" "$WEBLOGIC_URL"
 [ ! -f "$JDK_FILE" ] && echo "Downloading JDK..." &&  sudo -u weblogic curl -L -o "$JDK_FILE" "$JDK_URL"
 
 # --- Validate downloads ---
-MIN_WEBLOGIC_SIZE=579000000
+MIN_WEBLOGIC_SIZE=579000000 #sizein bytes
 actual_size=$(stat -c%s "$WEBLOGIC_FILE")
 if [ "$actual_size" -lt "$MIN_WEBLOGIC_SIZE" ]; then
   echo "Error: WebLogic zip file too small ($actual_size bytes)."
   exit 1
 fi
 
-MIN_JDK_SIZE=185000000
+MIN_JDK_SIZE=185000000 #size in bytes
 actual_size=$(stat -c%s "$JDK_FILE")
 if [ "$actual_size" -lt "$MIN_JDK_SIZE" ]; then
   echo "Error: JDK tar.gz file too small ($actual_size bytes)."
